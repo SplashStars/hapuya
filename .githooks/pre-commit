@@ -1,0 +1,18 @@
+#!/bin/sh
+# Blocks commits that contain secrets or signing files.
+# Enable once per clone: git config core.hooksPath .githooks
+
+blocked=$(git diff --cached --name-only --diff-filter=ACM | grep -E '\.(jks|keystore|p12|pem)$|(^|/)(google-services\.json|keystore\.properties|local\.properties|\.env[^/]*|\.dev\.vars)$')
+if [ -n "$blocked" ]; then
+  echo "pre-commit: refusing to commit secret or signing files:" >&2
+  echo "$blocked" >&2
+  exit 1
+fi
+
+if ! command -v gitleaks >/dev/null 2>&1; then
+  echo "pre-commit: gitleaks not found. Install it (winget install Gitleaks.Gitleaks), then retry." >&2
+  exit 1
+fi
+
+# gitleaks 8.19+ syntax
+gitleaks git --pre-commit --staged --redact --no-banner

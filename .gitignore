@@ -1,0 +1,36 @@
+# Secrets and signing — never commit
+*.jks
+*.keystore
+*.p12
+*.pem
+keystore.properties
+google-services.json
+service-account*.json
+.env
+.env.*
+secrets/
+local.properties
+
+# Gradle / build
+.gradle/
+build/
+captures/
+.externalNativeBuild/
+.cxx/
+*.apk
+*.aab
+output-metadata.json
+
+# Android Studio / IntelliJ
+.idea/
+*.iml
+.kotlin/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Backend (added in M3)
+node_modules/
+.wrangler/
+.dev.vars

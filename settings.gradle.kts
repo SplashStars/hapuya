@@ -19,3 +19,6 @@ include(":app")
 
 // Throwaway M2 experiments (PHASE2_PLAN A4, A5). Never depended on by :app.
 include(":spikes:alarms", ":spikes:notify")
+
+// Dev tools that run on the laptop or CI, never on a phone.
+include(":tools:intent-eval")

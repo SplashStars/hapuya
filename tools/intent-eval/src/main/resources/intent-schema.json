@@ -1,0 +1,21 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["intent", "title", "when_local", "recurrence", "duration_min", "expect"],
+  "properties": {
+    "intent": {
+      "type": "string",
+      "enum": [
+        "reminder.create", "reminder.delete", "reminder.move", "reminder.snooze", "reminder.list",
+        "event.create", "event.delete", "event.move", "event.update", "event.list",
+        "alarm.set", "alarm.update", "timer.set",
+        "payment", "booking", "other"
+      ]
+    },
+    "title": { "type": "string" },
+    "when_local": { "type": "string" },
+    "recurrence": { "type": "string" },
+    "duration_min": { "type": "string" },
+    "expect": { "type": "string" }
+  }
+}

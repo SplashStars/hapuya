@@ -16,3 +16,6 @@ dependencyResolutionManagement {
 
 rootProject.name = "Hapuya"
 include(":app")
+
+// Throwaway M2 experiments (PHASE2_PLAN A4, A5). Never depended on by :app.
+include(":spikes:alarms", ":spikes:notify")

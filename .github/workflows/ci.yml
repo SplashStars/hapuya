@@ -24,8 +24,8 @@ jobs:
         with:
           distribution: temurin
           java-version: "17"
-      # Held at v5 (MIT): v6 bundles a proprietary caching component under
-      # Gradle's separate terms of use, pending Splash's decision.
+      # Kept on v5 (MIT) by decision, 2 Nov 2026: v6 bundles a proprietary
+      # caching component under Gradle's separate terms of use.
       - uses: gradle/actions/wrapper-validation@v5
       - uses: gradle/actions/setup-gradle@v5
       - name: Unit tests, lint, debug build

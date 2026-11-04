@@ -17,3 +17,27 @@ Build the debug APKs:
 
 The notify spike stores no message content, and every test reply needs a tap to
 confirm.
+
+## Findings
+
+### A5 alarms: Samsung Galaxy S22+ (Android 16), 3-4 Nov 2026
+Full log: `05_Testing/results/A5-S22plus.md`.
+
+| Run | 1 h | 4 h | 8 h | Notes |
+|---|---|---|---|---|
+| 1 factory battery (Optimised) | 0.04 s | 0.21 s | 0.06 s | overnight; deep Doze 23:09-05:00 |
+| 2 Unrestricted | 0.29 s | 0.25 s | 0.03 s | daytime; deep Doze from 07:05 |
+| Reboot | 2 min 0.04 s before, 15 min 0.30 s after | | | rescheduled ~30 s after unlock |
+
+All 10 probes fired within 0.3 s (target 2 min), with exact alarms allowed and
+`setExactAndAllowWhileIdle`. Unplug was simulated with `dumpsys battery unplug`
+while on USB, not a true unplugged night.
+
+Carry into M3:
+- Exact-alarm access is off by default on Android 14+; onboarding must ask for it and
+  fall back to inexact alarms with a warning when declined.
+- `BOOT_COMPLETED` only arrives after the first unlock, so reminders due between a
+  reboot and that unlock wait. Make the scheduler direct-boot aware
+  (`LOCKED_BOOT_COMPLETED`, schedule times only in device-protected storage).
+
+Still needed for Gate 2: a second brand and an Android 10-12 phone.

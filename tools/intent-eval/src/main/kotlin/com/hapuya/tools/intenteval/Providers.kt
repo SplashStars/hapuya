@@ -119,7 +119,9 @@ class ClaudeProvider(
  * The second provider, through any OpenAI-style `/chat/completions` endpoint
  * (configured entirely by environment variables, so no vendor is baked in):
  *   EVAL_ALT_BASE_URL, EVAL_ALT_API_KEY, EVAL_ALT_MODEL,
- *   EVAL_ALT_PRICE_IN / EVAL_ALT_PRICE_OUT (USD per million tokens, optional).
+ *   EVAL_ALT_PRICE_IN / EVAL_ALT_PRICE_OUT (USD per million tokens, optional),
+ *   EVAL_ALT_REASONING_EFFORT (optional, e.g. "none" to turn thinking off),
+ *   EVAL_ALT_TIMEOUT_S (optional, default 60; local CPU models need more).
  * The schema goes in the prompt and JSON mode is requested.
  */
 class AltProvider(env: Map<String, String> = System.getenv()) : IntentProvider {
@@ -128,7 +130,9 @@ class AltProvider(env: Map<String, String> = System.getenv()) : IntentProvider {
     private val model = env.req("EVAL_ALT_MODEL")
     private val priceIn = env["EVAL_ALT_PRICE_IN"]?.toDoubleOrNull()
     private val priceOut = env["EVAL_ALT_PRICE_OUT"]?.toDoubleOrNull()
-    override val label = "alt:$model"
+    private val effort = env["EVAL_ALT_REASONING_EFFORT"]?.takeIf { it.isNotBlank() }
+    private val timeoutS = env["EVAL_ALT_TIMEOUT_S"]?.toLongOrNull() ?: 60
+    override val label = "alt:$model" + (effort?.let { "-effort_$it" } ?: "")
 
     private val http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(20)).build()
     private val system = resource("intent-system-prompt.md") +
@@ -136,17 +140,18 @@ class AltProvider(env: Map<String, String> = System.getenv()) : IntentProvider {
 
     override fun parse(phrase: Phrase): CallResult {
         val body = mapper.writeValueAsString(
-            mapOf(
-                "model" to model,
-                "response_format" to mapOf("type" to "json_object"),
-                "messages" to listOf(
+            buildMap {
+                put("model", model)
+                put("response_format", mapOf("type" to "json_object"))
+                effort?.let { put("reasoning_effort", it) }
+                put("messages", listOf(
                     mapOf("role" to "system", "content" to system),
                     mapOf("role" to "user", "content" to Reference.userMessage(phrase.phrase)),
-                ),
-            ),
+                ))
+            },
         )
         val req = HttpRequest.newBuilder(URI.create("$baseUrl/chat/completions"))
-            .timeout(Duration.ofSeconds(60))
+            .timeout(Duration.ofSeconds(timeoutS))
             .header("Authorization", "Bearer $apiKey")
             .header("Content-Type", "application/json")
             .POST(HttpRequest.BodyPublishers.ofString(body))

@@ -9,7 +9,7 @@ tool also records latency and cost per phrase.
 |---|---|---|
 | `oracle` | Returns the expected answers; checks the pipeline end to end | none |
 | `claude` | Official Anthropic Java SDK with structured outputs (`intent-schema.json`) | `ANTHROPIC_API_KEY` |
-| `alt` | Any OpenAI-style `/chat/completions` endpoint, in JSON mode | `EVAL_ALT_BASE_URL`, `EVAL_ALT_API_KEY`, `EVAL_ALT_MODEL`, optional `EVAL_ALT_PRICE_IN` / `EVAL_ALT_PRICE_OUT` (USD per million tokens) |
+| `alt` | Any OpenAI-style `/chat/completions` endpoint, in JSON mode | `EVAL_ALT_BASE_URL`, `EVAL_ALT_API_KEY`, `EVAL_ALT_MODEL`, optional `EVAL_ALT_PRICE_IN` / `EVAL_ALT_PRICE_OUT` (USD per million tokens), `EVAL_ALT_REASONING_EFFORT` (e.g. `none` turns thinking off) and `EVAL_ALT_TIMEOUT_S` (default 60; raise it for local CPU models) |
 
 The system prompt (`src/main/resources/intent-system-prompt.md`) holds the
 product's date and time defaults. The backend's `/v1/ai/intent` will reuse it
@@ -42,3 +42,11 @@ and the schema.
 The unit tests cover the scorer, the CSV parsing and the JSON parsing. One test
 runs the oracle over the real phrase set; it skips itself when `05_Testing` isn't
 next to the repo, as in CI.
+
+## Findings
+- **Free local baseline, 5 Nov 2026:** Gemma 4 E2B through Ollama on the build
+  laptop (CPU only) scored 40.5% core with thinking off (p95 6.2 s) and 50.5% with
+  thinking on (p95 64 s). The bar is 95% and under 3 s. Most errors are date maths
+  (weekday off by one, missing 09:00 default). Takeaway for M3: the model returns
+  the time expression and Kotlin code resolves the date. Full write-up in
+  `05_Testing/A2-runbook.md`, outside this repo.

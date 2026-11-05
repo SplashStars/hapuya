@@ -41,3 +41,13 @@ Carry into M3:
   (`LOCKED_BOOT_COMPLETED`, schedule times only in device-protected storage).
 
 Still needed for Gate 2: a second brand and an Android 10-12 phone.
+
+### A4 notifications: Samsung Galaxy S22+ (Android 16), 5 Nov 2026 (self-test)
+Full log: `05_Testing/spikes/A4-notification-reply.md`. With no second sender, the spike
+posts its own MessagingStyle notifications with a RemoteInput reply and replies to them
+over adb (`SelfTestReceiver`, DUMP-protected; never touches other apps' notifications).
+
+- Capture 20/20, all under 5 s (avg 251 ms, max 262 ms), phone locked.
+- Reply 10/10 delivered via RemoteInput (avg 6 ms).
+- Samsung delivered each notification to the listener twice: de-duplicate in the inbox.
+- Not covered: real messaging apps' reply handlers. Checked in beta.

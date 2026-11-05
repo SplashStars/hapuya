@@ -20,6 +20,7 @@ val WATCHED = mapOf(
     "org.telegram.messenger" to "Telegram",
     "com.google.android.apps.messaging" to "Google Messages",
     "com.samsung.android.messaging" to "Samsung Messages",
+    "com.hapuya.spike.notify" to "Self-test",
 )
 
 const val TEST_REPLY = "Hapuya test reply - please ignore"
@@ -56,6 +57,12 @@ class CaptureService : NotificationListenerService() {
         val title = n.extras.getCharSequence(Notification.EXTRA_TITLE)?.toString().orEmpty()
         CaptureLog.items.add(0, Captured(sbn.packageName, title, sbn.postTime, System.currentTimeMillis(), reply))
         if (CaptureLog.items.size > 200) CaptureLog.items.removeAt(CaptureLog.items.lastIndex)
+        // Metadata only (no title, no text) so results can be read over adb without the UI.
+        val c = CaptureLog.items[0]
+        runCatching {
+            java.io.File(filesDir, "captures.csv")
+                .appendText("${c.postedAt},${c.app},${c.latencyMs},${c.reply != null}\n")
+        }
     }
 }
 

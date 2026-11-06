@@ -25,6 +25,7 @@ object Reference {
     const val DATETIME = "Monday 2026-10-26 09:00"
     const val ZONE = "America/New_York"
     const val LOCALE = "en-US"
+    val NOW: java.time.LocalDateTime = java.time.LocalDateTime.of(2026, 10, 26, 9, 0)
 
     fun userMessage(phrase: String) =
         "Reference time: $DATETIME\nTime zone: $ZONE\nLocale: $LOCALE\nCommand: $phrase"
@@ -72,3 +73,23 @@ object PhraseCsv {
 /** Loads a classpath resource bundled with this tool. */
 fun resource(name: String): String =
     requireNotNull(Phrase::class.java.getResource("/$name")) { "Missing resource $name" }.readText()
+
+/**
+ * direct: the model returns when_local itself. split: the model returns the time
+ * words in a fixed code ([SplitIntent]) and [Resolver] computes the date.
+ */
+enum class Mode(val prompt: String, val schema: String, val suffix: String) {
+    DIRECT("intent-system-prompt.md", "intent-schema.json", ""),
+    SPLIT("intent-split-prompt.md", "intent-split-schema.json", "-split");
+
+    /** Split mode leaves out the date and weekday so the model has nothing to do date maths with. */
+    fun userMessage(phrase: String): String = when (this) {
+        DIRECT -> Reference.userMessage(phrase)
+        SPLIT -> "Locale: ${Reference.LOCALE}\nCommand: $phrase"
+    }
+
+    fun decode(text: String): Intent = when (this) {
+        DIRECT -> intentFromJson(text)
+        SPLIT -> Resolver.resolve(splitFromJson(text))
+    }
+}

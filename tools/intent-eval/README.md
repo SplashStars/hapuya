@@ -50,3 +50,8 @@ next to the repo, as in CI.
   (weekday off by one, missing 09:00 default). Takeaway for M3: the model returns
   the time expression and Kotlin code resolves the date. Full write-up in
   `05_Testing/A2-runbook.md`, outside this repo.
+- **Split mode, 5 Nov 2026:** `--mode split` has the model return the time words
+  it heard (codes in `intent-split-prompt.md`) and `Resolver.kt` compute the date
+  and apply policy. Same Gemma model: 40.5% -> 73.5% core, same speed. The fixes
+  were tuned on this phrase set, so confirm on a fresh set. `ResolverTest` checks
+  the resolver alone against 120 rows with ideal codes.

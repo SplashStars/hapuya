@@ -13,6 +13,7 @@ Usage: gradlew :tools:intent-eval:run --args="--provider <oracle|claude|alt> [op
   --provider   oracle (offline, no cost) | claude (ANTHROPIC_API_KEY) | alt (EVAL_ALT_* env vars)
   --model      Claude model id (default claude-haiku-5-5)
   --effort     Claude effort: low | medium | high (default low)
+  --mode       direct (model returns the date) | split (model returns time words, code resolves; default direct)
   --limit N    only the first N phrases
   --ids 1,5,9  only these phrase ids
   --parallel N concurrent calls (default 4)
@@ -28,13 +29,15 @@ fun main(args: Array<String>) {
     opts["ids"]?.let { ids -> val set = ids.split(',').map { it.trim().toInt() }.toSet(); phrases = phrases.filter { it.id in set } }
     opts["limit"]?.let { phrases = phrases.take(it.toInt()) }
 
+    val mode = Mode.valueOf(opts.getOrDefault("mode", "direct").uppercase())
     val provider: IntentProvider = when (opts["provider"]) {
         "oracle" -> OracleProvider()
         "claude" -> ClaudeProvider(
             model = opts.getOrDefault("model", "claude-haiku-5-5"),
             effort = OutputConfig.Effort.of(opts.getOrDefault("effort", "low")),
+            mode = mode,
         )
-        "alt" -> AltProvider()
+        "alt" -> AltProvider(mode = mode)
         else -> { println(USAGE); exitProcess(2) }
     }
     val maxUsd = opts.getOrDefault("max-usd", "1.00").toDouble()

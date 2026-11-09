@@ -122,11 +122,13 @@ enum class Mode(val prompt: String, val schema: String, val suffix: String) {
      * [said] is the user's command: when given, [CrossCheck] corrects codes that do not
      * match the words said (pass "" to turn the check off, as the A6 "before" runs did).
      */
-    fun decode(text: String, said: String = ""): Intent = when (this) {
+    fun decode(text: String, said: String = "", now: java.time.LocalDateTime = Reference.NOW): Intent = when (this) {
         DIRECT -> intentFromJson(text)
-        SPLIT, SHORT -> checked(splitFromJson(text), said)
-        COMPACT, SHORT_COMPACT -> checked(splitFromLine(text), said)
+        SPLIT, SHORT -> checked(splitFromJson(text), said, now)
+        COMPACT, SHORT_COMPACT -> checked(splitFromLine(text), said, now)
     }
 
-    private fun checked(s: SplitIntent, said: String) = Resolver.resolve(CrossCheck.check(Resolver.tidy(s), said))
+    /** [now] is the reference clock for tests and the phone's own clock in the app. */
+    private fun checked(s: SplitIntent, said: String, now: java.time.LocalDateTime) =
+        Resolver.resolve(CrossCheck.check(Resolver.tidy(s), said), now)
 }

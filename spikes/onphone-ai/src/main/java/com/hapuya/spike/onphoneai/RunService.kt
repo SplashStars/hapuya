@@ -49,6 +49,30 @@ class RunService : Service() {
             "nano" -> { { Jobs.runNano(ctx) } }
             "nano-check" -> { { Jobs.nanoStatus() } }
             "nano-download" -> { { Jobs.downloadNano() } }
+            // Laptop smoke tests of the Try and Connect cards (the phone can stay locked):
+            //   --es run try --es cmd "Remind me…" [--es engine AUTO|RULES|YOUR_AI|BUILT_IN|PHONE_MODEL]
+            //   --es run connect | disconnect
+            //   --es run answer --es cmd "<command>" --es text "<an AI app's answer>"
+            "try" -> {
+                val cmd = intent?.getStringExtra("cmd").orEmpty()
+                val engine = runCatching { TryIt.Engine.valueOf(intent?.getStringExtra("engine") ?: "AUTO") }.getOrDefault(TryIt.Engine.AUTO)
+                ; {
+                    runCatching { TryIt.understand(ctx, cmd, engine, UiState::say) }
+                        .onSuccess { UiState.say("TRY [${it.engine}] ${it.ms} ms | ${it.intent} | raw=${it.raw.trim()} | ${it.note}") }
+                        .onFailure { UiState.say("TRY failed: ${it.message}") }
+                }
+            }
+            "connect" -> { { TryIt.connectAll(ctx, UiState::say).forEach { UiState.say("CONNECT $it") } } }
+            "disconnect" -> { { OwnAi.disconnect(ctx); UiState.say("CONNECT disconnected") } }
+            "answer" -> {
+                val cmd = intent?.getStringExtra("cmd").orEmpty()
+                val text = intent?.getStringExtra("text").orEmpty()
+                ; {
+                    TryState.waitingFor = cmd; TryState.waitingApp = "adb"
+                    TryState.answerFromApp(text)
+                    UiState.say("ANSWER ${TryState.result?.intent ?: TryState.error}")
+                }
+            }
             else -> { { UiState.say("Unknown run=$run") } }
         }
         val wake = getSystemService(PowerManager::class.java)

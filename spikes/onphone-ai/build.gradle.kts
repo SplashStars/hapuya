@@ -15,8 +15,8 @@ android {
         applicationId = "com.hapuya.spike.onphoneai"
         minSdk = 29
         targetSdk = 36
-        versionCode = 1
-        versionName = "0.1-spike"
+        versionCode = 2
+        versionName = "0.2-test"
         ndk { abiFilters += "arm64-v8a" }
     }
 

@@ -83,6 +83,16 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         UiState.modelStatus = ModelFile.status(this)
+        // Fill the built-in AI line quietly; no download without the user's approval.
+        UiState.scope.launch {
+            val s = runCatching { com.google.mlkit.genai.prompt.Generation.getClient().checkStatus() }.getOrNull()
+            UiState.nanoStatus = when (s) {
+                com.google.mlkit.genai.common.FeatureStatus.AVAILABLE -> "ready"
+                com.google.mlkit.genai.common.FeatureStatus.DOWNLOADABLE -> "supported, not downloaded"
+                com.google.mlkit.genai.common.FeatureStatus.DOWNLOADING -> "downloading"
+                else -> "not on this phone"
+            }
+        }
         setContent { MaterialTheme { Screen() } }
         handle(intent)
     }
@@ -93,6 +103,11 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun handle(intent: Intent?) {
+        // An AI app's answer shared back to Hapuya (see TryCard).
+        if (intent?.action == Intent.ACTION_SEND) {
+            intent.getStringExtra(Intent.EXTRA_TEXT)?.let { TryState.answerFromApp(it) }
+            return
+        }
         val run = intent?.getStringExtra("run") ?: return
         intent.removeExtra("run")
         startForegroundService(Intent(intent).setClass(this, RunService::class.java).putExtra("run", run))
@@ -115,7 +130,12 @@ class MainActivity : ComponentActivity() {
             Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Text("A6 on-phone AI test", style = MaterialTheme.typography.headlineSmall)
+            Text("Hapuya test", style = MaterialTheme.typography.headlineSmall)
+            Text("Test build. Works offline. Nothing is created until you confirm in the Clock or Calendar app.", style = MaterialTheme.typography.bodySmall)
+            TryCard(this@MainActivity)
+            ConnectCard(applicationContext)
+
+            Text("Benchmark tools", style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(top = 16.dp))
             Text(deviceLine(), style = MaterialTheme.typography.bodySmall)
 
             Card(Modifier.fillMaxWidth()) {

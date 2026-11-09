@@ -10,7 +10,6 @@ import com.anthropic.models.messages.JsonOutputFormat
 import com.anthropic.models.messages.MessageCreateParams
 import com.anthropic.models.messages.OutputConfig
 import com.anthropic.models.messages.StopReason
-import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
 import java.net.URI
 import java.net.http.HttpClient
@@ -35,17 +34,20 @@ interface IntentProvider {
 
 private val mapper = ObjectMapper()
 
-/** Reads the model's JSON object into an [Intent]; missing fields become "". */
-fun intentFromJson(text: String): Intent {
-    val n: JsonNode = mapper.readTree(text)
-    fun f(name: String) = n.path(name).let { if (it.isMissingNode || it.isNull) "" else it.asText() }
-    return Intent(f("intent"), f("title"), f("when_local"), f("recurrence"), f("duration_min"), f("expect"))
-}
-
 /** Answers with the expected values. Checks the harness end to end without any API spend. */
 class OracleProvider : IntentProvider {
     override val label = "oracle"
     override fun parse(phrase: Phrase) = CallResult(phrase.expected, latencyMs = 0)
+}
+
+/** No model: the intent is guessed from the words and [CrossCheck] reads the rest (A6, 8 Nov 2026). */
+class RulesProvider : IntentProvider {
+    override val label = "rules-only"
+    override fun parse(phrase: Phrase): CallResult {
+        val start = System.nanoTime()
+        val got = Resolver.resolve(CrossCheck.fromWords(phrase.phrase))
+        return CallResult(got, (System.nanoTime() - start) / 1_000_000)
+    }
 }
 
 /**
@@ -56,8 +58,11 @@ class ClaudeProvider(
     private val model: String,
     private val effort: OutputConfig.Effort,
     private val mode: Mode = Mode.DIRECT,
+    private val crossCheck: Boolean = true,
 ) : IntentProvider {
-    override val label = "claude:$model:${effort.asString()}${mode.suffix}"
+    override val label = "claude:$model:${effort.asString()}${mode.suffix}" + if (crossCheck) "" else "-nocheck"
+
+    init { require(mode.schema.isNotEmpty()) { "The claude provider uses structured JSON output; use --mode direct or split" } }
 
     private val client: AnthropicClient = AnthropicOkHttpClient.fromEnv()
     private val system = resource(mode.prompt)
@@ -95,7 +100,7 @@ class ClaudeProvider(
                 return CallResult(null, ms, inTok, outTok, cost, error = "refusal")
             }
             val text = msg.content().mapNotNull { block -> block.text().map { it.text() }.orElse(null) }.joinToString("")
-            CallResult(mode.decode(text), ms, inTok, outTok, cost)
+            CallResult(mode.decode(text, if (crossCheck) phrase.phrase else ""), ms, inTok, outTok, cost)
         } catch (e: RateLimitException) {
             CallResult(null, elapsed(start), error = "rate_limited")
         } catch (e: AnthropicServiceException) {
@@ -125,7 +130,11 @@ class ClaudeProvider(
  *   EVAL_ALT_TIMEOUT_S (optional, default 60; local CPU models need more).
  * The schema goes in the prompt and JSON mode is requested.
  */
-class AltProvider(env: Map<String, String> = System.getenv(), private val mode: Mode = Mode.DIRECT) : IntentProvider {
+class AltProvider(
+    env: Map<String, String> = System.getenv(),
+    private val mode: Mode = Mode.DIRECT,
+    private val crossCheck: Boolean = true,
+) : IntentProvider {
     private val baseUrl = env.req("EVAL_ALT_BASE_URL").trimEnd('/')
     private val apiKey = env.req("EVAL_ALT_API_KEY")
     private val model = env.req("EVAL_ALT_MODEL")
@@ -133,17 +142,16 @@ class AltProvider(env: Map<String, String> = System.getenv(), private val mode: 
     private val priceOut = env["EVAL_ALT_PRICE_OUT"]?.toDoubleOrNull()
     private val effort = env["EVAL_ALT_REASONING_EFFORT"]?.takeIf { it.isNotBlank() }
     private val timeoutS = env["EVAL_ALT_TIMEOUT_S"]?.toLongOrNull() ?: 60
-    override val label = "alt:$model" + (effort?.let { "-effort_$it" } ?: "") + mode.suffix
+    override val label = "alt:$model" + (effort?.let { "-effort_$it" } ?: "") + mode.suffix + if (crossCheck) "" else "-nocheck"
 
     private val http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(20)).build()
-    private val system = resource(mode.prompt) +
-        "\nReturn only a JSON object that matches this JSON Schema:\n" + resource(mode.schema)
+    private val system = mode.systemPrompt()
 
     override fun parse(phrase: Phrase): CallResult {
         val body = mapper.writeValueAsString(
             buildMap {
                 put("model", model)
-                put("response_format", mapOf("type" to "json_object"))
+                if (mode.json) put("response_format", mapOf("type" to "json_object"))
                 effort?.let { put("reasoning_effort", it) }
                 put("messages", listOf(
                     mapOf("role" to "system", "content" to system),
@@ -168,9 +176,11 @@ class AltProvider(env: Map<String, String> = System.getenv(), private val mode: 
             val outTok = n.path("usage").path("completion_tokens").asLong()
             val cost = if (priceIn != null && priceOut != null) (inTok * priceIn + outTok * priceOut) / 1_000_000.0 else 0.0
             val text = n.path("choices").path(0).path("message").path("content").asText()
-            CallResult(mode.decode(text), ms, inTok, outTok, cost)
+            CallResult(mode.decode(text, if (crossCheck) phrase.phrase else ""), ms, inTok, outTok, cost)
         } catch (e: com.fasterxml.jackson.core.JsonProcessingException) {
             CallResult(null, elapsed(start), error = "bad_json")
+        } catch (e: IllegalArgumentException) {
+            CallResult(null, elapsed(start), error = "bad_format")
         } catch (e: java.io.IOException) {
             CallResult(null, elapsed(start), error = "network:${e.javaClass.simpleName}")
         }

@@ -10,34 +10,42 @@ import kotlin.system.exitProcess
 private const val USAGE = """
 Usage: gradlew :tools:intent-eval:run --args="--provider <oracle|claude|alt> [options]"
 
-  --provider   oracle (offline, no cost) | claude (ANTHROPIC_API_KEY) | alt (EVAL_ALT_* env vars)
+  --provider   oracle (offline, no cost) | rules (no model: words only) | claude (ANTHROPIC_API_KEY) | alt (EVAL_ALT_* env vars)
   --model      Claude model id (default claude-haiku-5-5)
   --effort     Claude effort: low | medium | high (default low)
-  --mode       direct (model returns the date) | split (model returns time words, code resolves; default direct)
+  --mode       direct (model returns the date) | split (model returns time words, code resolves) | compact (split, one-line answer) | short (split, ~650-token instructions) | short-compact (both); default direct
   --limit N    only the first N phrases
   --ids 1,5,9  only these phrase ids
   --parallel N concurrent calls (default 4)
   --max-usd X  stop sending new calls once spend reaches X (default 1.00)
   --dataset    phrase CSV (default ../05_Testing/testsets/reminder-phrases-v1.csv)
   --out        results directory (default ../05_Testing/results)
+  --check      on | off: correct the model's codes against the words said (default on)
+
+Rescore saved on-phone answers (A6 results CSV, "raw" column) with and without the check:
+  gradlew :tools:intent-eval:run --args="--rescore <A6 csv> --mode short-compact --dataset <phrase csv>"
 """
 
 fun main(args: Array<String>) {
     val opts = parseArgs(args) ?: run { println(USAGE); exitProcess(2) }
+    if ("rescore" in opts) return rescore(opts)
 
     var phrases = PhraseCsv.load(File(opts.getOrDefault("dataset", "../05_Testing/testsets/reminder-phrases-v1.csv")))
     opts["ids"]?.let { ids -> val set = ids.split(',').map { it.trim().toInt() }.toSet(); phrases = phrases.filter { it.id in set } }
     opts["limit"]?.let { phrases = phrases.take(it.toInt()) }
 
-    val mode = Mode.valueOf(opts.getOrDefault("mode", "direct").uppercase())
+    val mode = Mode.valueOf(opts.getOrDefault("mode", "direct").uppercase().replace('-', '_'))
+    val check = opts.getOrDefault("check", "on") != "off"
     val provider: IntentProvider = when (opts["provider"]) {
         "oracle" -> OracleProvider()
+        "rules" -> RulesProvider()
         "claude" -> ClaudeProvider(
             model = opts.getOrDefault("model", "claude-haiku-5-5"),
             effort = OutputConfig.Effort.of(opts.getOrDefault("effort", "low")),
             mode = mode,
+            crossCheck = check,
         )
-        "alt" -> AltProvider(mode = mode)
+        "alt" -> AltProvider(mode = mode, crossCheck = check)
         else -> { println(USAGE); exitProcess(2) }
     }
     val maxUsd = opts.getOrDefault("max-usd", "1.00").toDouble()
@@ -88,5 +96,30 @@ private fun parseArgs(args: Array<String>): Map<String, String>? {
         out[k] = args[i + 1]
         i += 2
     }
-    return out.takeIf { "provider" in it }
+    return out.takeIf { "provider" in it || "rescore" in it }
+}
+
+/** Decodes the saved raw answers of an on-phone run again, with and without [CrossCheck]. */
+private fun rescore(opts: Map<String, String>) {
+    val mode = Mode.valueOf(opts.getOrDefault("mode", "short-compact").uppercase().replace('-', '_'))
+    val phrases = PhraseCsv.load(File(opts.getValue("dataset"))).associateBy { it.id }
+    val lines = File(opts.getValue("rescore")).readLines().filter { it.isNotBlank() }
+    val header = PhraseCsv.splitRow(lines.first())
+    val idCol = header.indexOf("id"); val rawCol = header.indexOf("raw")
+    require(idCol >= 0 && rawCol >= 0) { "Need id and raw columns" }
+    var before = 0; var after = 0; var n = 0
+    for (line in lines.drop(1)) {
+        val f = PhraseCsv.splitRow(line)
+        val p = phrases[f[idCol].toInt()] ?: continue
+        val raw = f[rawCol]
+        fun ok(said: String) = runCatching { Scorer.score(p.expected, mode.decode(raw, said)).core }.getOrDefault(false)
+        val b = ok(""); val a = ok(p.phrase)
+        n++; if (b) before++; if (a) after++
+        if (a != b || !a) {
+            val got = runCatching { mode.decode(raw, p.phrase) }.getOrNull()
+            println("#${p.id} ${if (b) "ok " else "MISS"} -> ${if (a) "ok " else "MISS"}  ${p.phrase}\n      raw: $raw\n      got: ${got?.let { "${it.intent} ${it.whenLocal} ${it.recurrence} ${it.durationMin} ${it.expect}" }}" +
+                "  want: ${p.expected.intent} ${p.expected.whenLocal} ${p.expected.recurrence} ${p.expected.durationMin} ${p.expected.expect}")
+        }
+    }
+    println("Without check: $before/$n (${"%.1f".format(before * 100.0 / n)}%)  With check: $after/$n (${"%.1f".format(after * 100.0 / n)}%)")
 }

@@ -24,6 +24,7 @@ application {
 }
 
 dependencies {
+    implementation(project(":tools:intent-core"))
     implementation(libs.anthropic.java)
     testImplementation(libs.kotlin.test.junit)
 }

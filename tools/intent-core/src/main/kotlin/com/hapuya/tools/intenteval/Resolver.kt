@@ -29,6 +29,46 @@ fun splitFromJson(text: String): SplitIntent {
     return SplitIntent(f("intent"), f("title"), f("day"), f("clock"), f("until"), f("recurrence"), f("duration_min"), f("expect"))
 }
 
+/**
+ * Compact mode: one line "intent | title:... | day:... | clock:...", with empty fields
+ * left out and expect defaulting to "act" (see intent-compact-format.md). Labelled
+ * fields, because a small model miscounts empty positional fields ("a||||b"): tried
+ * 7 Nov 2026, 32.8% on the holdout. Takes the first line that starts with an intent
+ * name (skipping a code fence); unknown labels are ignored. Throws
+ * [IllegalArgumentException] if there is no such line.
+ */
+private val DAY_KINDS = setOf("in", "weekday", "next", "date", "dom", "holiday")
+private val OUTCOMES = setOf("clarify", "unsupported", "block")
+private val BARE_DAYS = setOf("today", "tomorrow", "yesterday", "weekend", "vague")
+
+fun splitFromLine(text: String): SplitIntent {
+    val intentName = Regex("[a-z]+(\\.[a-z]+)?")
+    val line = text.lineSequence()
+        .map { it.trim().trim('`').trim() }
+        .firstOrNull { it.substringBefore('|').trim().matches(intentName) && it.substringBefore('|').trim() != "intent" }
+        ?: throw IllegalArgumentException("no compact line")
+    val parts = line.split('|').map { it.trim() }
+    val f = mutableMapOf<String, String>()
+    for (p in parts.drop(1)) {
+        val k = p.substringBefore(':', "").trim().lowercase()
+        val v = p.substringAfter(':').trim().removeSurrounding("\"")
+        when {
+            // A day or clock code written without its label ("| in:3:hour", "| tomorrow").
+            k in DAY_KINDS -> f.putIfAbsent("day", "$k:$v")
+            k == "part" || k == "bare" -> f.putIfAbsent("clock", "$k:$v")
+            // An outcome written without its label ("| unsupported:location") beats "act".
+            k in OUTCOMES -> if (f["expect"].isNullOrEmpty() || f["expect"] == "act") f["expect"] = "$k:$v"
+            k.isEmpty() && p.trim().lowercase() in BARE_DAYS -> f.putIfAbsent("day", p.trim().lowercase())
+            k.isNotEmpty() -> f.putIfAbsent(k, v)
+        }
+    }
+    fun at(k: String) = f[k].orEmpty()
+    return SplitIntent(
+        parts[0], at("title"), at("day"), at("clock"), at("until"), at("recurrence"), at("duration_min"),
+        at("expect").ifEmpty { "act" },
+    )
+}
+
 object Resolver {
     private val PARTS = mapOf(
         "morning" to LocalTime.of(9, 0), "noon" to LocalTime.NOON, "lunch" to LocalTime.NOON,
@@ -205,7 +245,66 @@ object Resolver {
 
     private fun fmt(dt: LocalDateTime) = dt.toString().take(16)
 
-    fun resolve(s: SplitIntent, now: LocalDateTime = Reference.NOW): Intent {
+    private val HOLIDAY_ALIASES = mapOf(
+        "new-year-eve" to "new-years-eve", "newyearseve" to "new-years-eve", "nye" to "new-years-eve",
+        "new-years" to "new-year", "new-years-day" to "new-year", "new-year-day" to "new-year",
+        "christmas-day" to "christmas", "xmas" to "christmas", "xmas-eve" to "christmas-eve",
+        "valentines-day" to "valentines", "valentine" to "valentines", "valentine-day" to "valentines",
+        "july-4" to "independence-day", "fourth-of-july" to "independence-day", "thanksgiving-day" to "thanksgiving",
+    )
+    private val BY_TIME = Regex("^BY(HOUR|MINUTE|SECOND)=", RegexOption.IGNORE_CASE)
+
+    /**
+     * Fixes small-model slips that have only one reading (seen on Gemma 4 E2B with the
+     * short instructions, 7 Nov 2026): a day-part without "part:" ("evening"), a
+     * day-part glued to a holiday ("holiday:christmas-morning"), holiday spellings,
+     * times inside the RRULE (BYHOUR=18; the time belongs in clock), a one-off "in a
+     * week" also written as a rule, a rule in the day field, "date:30" for a day of the
+     * month, full weekday names, and "booking.create" or "snooze" for the intent. Anything with
+     * more than one reading is left alone, so the rules still ask.
+     */
+    fun tidy(s: SplitIntent): SplitIntent {
+        val intent = s.intent.trim().lowercase().let {
+            when {
+                it.startsWith("booking") -> "booking"
+                it.startsWith("payment") -> "payment"
+                it == "snooze" -> "reminder.snooze"
+                else -> it
+            }
+        }
+        fun part(c: String) = c.trim().let { if (it.lowercase().substringBefore('@') in PARTS) "part:${it.lowercase()}" else it }
+        var day = part(s.day)
+        var clock = part(s.clock)
+        var recurrence = s.recurrence
+        // A rule written in the day field ("day:FREQ=WEEKLY;BYDAY=MO").
+        if (day.uppercase().startsWith("FREQ=")) {
+            if (recurrence.isBlank()) recurrence = day
+            day = ""
+        }
+        // "date:30" has no month: it is a day of the month.
+        Regex("date:(\\d{1,2})", RegexOption.IGNORE_CASE).matchEntire(day)?.let { day = "dom:" + it.groupValues[1] }
+        // "weekday:saturday" -> "weekday:SA".
+        Regex("weekday:([a-z]{3,})", RegexOption.IGNORE_CASE).matchEntire(day)?.let { day = "weekday:" + it.groupValues[1].take(2).uppercase() }
+        if (day.lowercase().startsWith("holiday:")) {
+            var name = day.substring(8).lowercase().replace("'", "").replace("’", "").replace(' ', '-')
+            Regex("(.+)-(morning|afternoon|evening|night)").matchEntire(name)?.let { m ->
+                name = m.groupValues[1]
+                if (clock.isBlank()) clock = "part:" + m.groupValues[2]
+            }
+            day = "holiday:" + (HOLIDAY_ALIASES[name] ?: name)
+        }
+        var rule = recurrence.trim().removePrefix("RRULE:").split(';').filter { it.isNotBlank() && !BY_TIME.containsMatchIn(it.trim()) }
+        // "BYDAY=SA;BYDAY=SU" -> "BYDAY=SA,SU": a repeated key is one list.
+        rule = rule.groupBy { it.substringBefore('=').trim().uppercase() }.map { (k, parts) ->
+            if (parts.size == 1) parts[0] else "$k=" + parts.joinToString(",") { it.substringAfter('=').trim() }
+        }
+        // "in a week" is a one-off: a rule with no BY part next to an "in:" day is the offset restated.
+        if (day.lowercase().startsWith("in:") && rule.none { it.trim().uppercase().startsWith("BY") }) rule = emptyList()
+        return s.copy(intent = intent, day = day, clock = clock, recurrence = rule.joinToString(";"))
+    }
+
+    fun resolve(raw: SplitIntent, now: LocalDateTime = Reference.NOW): Intent {
+        val s = tidy(raw)
         val keepDuration = s.intent in HAS_DURATION
         fun out(whenLocal: String = "", rec: String = s.recurrence, dur: String = s.durationMin, expect: String = s.expect) =
             Intent(s.intent, s.title, whenLocal, rec, if (keepDuration) dur else "", expect)

@@ -8,15 +8,18 @@ their code is not reused; the findings are.
 |---|---|---|---|
 | `:spikes:alarms` | A5 | Do exact alarms fire within 2 min under each brand's battery manager, overnight and after reboot? | `05_Testing/spikes/A5-reminder-reliability.md` |
 | `:spikes:notify` | A4 | Do notifications arrive within 5 s, and do reply actions deliver on WhatsApp, Telegram, Google Messages and Samsung Messages? | `05_Testing/spikes/A4-notification-reply.md` |
+| `:spikes:onphone-ai` | A6 | Does the phone have built-in Gemini Nano? How fast, accurate and battery-hungry is a downloaded Gemma 4 E2B (LiteRT-LM) in split mode? | `05_Testing/spikes/A6-onphone-ai.md` |
 
 Build the debug APKs:
 
 ```bash
-./gradlew :spikes:alarms:assembleDebug :spikes:notify:assembleDebug
+./gradlew :spikes:alarms:assembleDebug :spikes:notify:assembleDebug :spikes:onphone-ai:assembleDebug
 ```
 
 The notify spike stores no message content, and every test reply needs a tap to
-confirm.
+confirm. The onphone-ai spike uses only the test phrase sets. It downloads one model
+file from a pinned URL, checks its SHA-256 and runs the same `Resolver` and scorer as
+the laptop eval (`:tools:intent-core`).
 
 ## Findings
 

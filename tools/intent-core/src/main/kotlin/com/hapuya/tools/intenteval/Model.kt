@@ -34,9 +34,12 @@ object Reference {
 object PhraseCsv {
     private val HEADER = listOf("id", "category", "phrase", "intent", "title", "when_local", "recurrence", "duration_min", "expect")
 
-    fun load(file: File): List<Phrase> {
-        val lines = file.readLines().filter { it.isNotBlank() }
-        require(splitRow(lines.first()) == HEADER) { "Unexpected header in $file" }
+    fun load(file: File): List<Phrase> = parse(file.readLines(), file.toString())
+
+    /** Same as [load] for text that is not a file (an Android asset, for example). */
+    fun parse(allLines: List<String>, source: String = "phrase set"): List<Phrase> {
+        val lines = allLines.filter { it.isNotBlank() }
+        require(splitRow(lines.first()) == HEADER) { "Unexpected header in $source" }
         return lines.drop(1).map { line ->
             val f = splitRow(line)
             require(f.size == HEADER.size) { "Bad row (${f.size} fields): $line" }
@@ -80,16 +83,50 @@ fun resource(name: String): String =
  */
 enum class Mode(val prompt: String, val schema: String, val suffix: String) {
     DIRECT("intent-system-prompt.md", "intent-schema.json", ""),
-    SPLIT("intent-split-prompt.md", "intent-split-schema.json", "-split");
+    SPLIT("intent-split-prompt.md", "intent-split-schema.json", "-split"),
 
-    /** Split mode leaves out the date and weekday so the model has nothing to do date maths with. */
+    /** Split mode with a one-line "a|b|c" answer: about 20 output tokens instead of 80 (A6 speed). */
+    COMPACT("intent-split-prompt.md", "", "-compact"),
+
+    /** Split mode with about 350 tokens of instructions instead of about 1,700 (A6: fresh read in ~3 s). */
+    SHORT("intent-short-prompt.md", "", "-short"),
+
+    /** SHORT instructions with the COMPACT one-line answer: least reading and least writing. */
+    SHORT_COMPACT("intent-short-prompt.md", "", "-short-compact");
+
+    /** True when the answer is a JSON object (so JSON mode / a schema applies). */
+    val json get() = this != COMPACT && this != SHORT_COMPACT
+
+    /** The full instructions for a model that is told the format in the prompt (not by an API schema). */
+    fun systemPrompt(): String = when (this) {
+        COMPACT -> resource(prompt).replace(
+            "Return exactly one JSON object matching the schema.", "Answer in the one-line format given at the end.",
+        ) + resource("intent-compact-format.md")
+        SHORT -> resource(prompt)
+        SHORT_COMPACT -> resource(prompt).lines()
+            .filterNot { it.startsWith("Example:") || it.startsWith("Answer with the JSON") }
+            .joinToString("\n")
+            .replace("into JSON for", "into one line for")
+            .replace("Always give all 8 keys as strings, \"\" when not said:", "Fields (codes as below):") +
+            "\n" + resource("intent-compact-format.md")
+        else -> resource(prompt) + "\nReturn only a JSON object that matches this JSON Schema:\n" + resource(schema)
+    }
+
+    /** Split modes leave out the date and weekday so the model has nothing to do date maths with. */
     fun userMessage(phrase: String): String = when (this) {
         DIRECT -> Reference.userMessage(phrase)
-        SPLIT -> "Locale: ${Reference.LOCALE}\nCommand: $phrase"
+        SPLIT, COMPACT, SHORT, SHORT_COMPACT -> "Locale: ${Reference.LOCALE}\nCommand: $phrase"
     }
 
-    fun decode(text: String): Intent = when (this) {
+    /**
+     * [said] is the user's command: when given, [CrossCheck] corrects codes that do not
+     * match the words said (pass "" to turn the check off, as the A6 "before" runs did).
+     */
+    fun decode(text: String, said: String = ""): Intent = when (this) {
         DIRECT -> intentFromJson(text)
-        SPLIT -> Resolver.resolve(splitFromJson(text))
+        SPLIT, SHORT -> checked(splitFromJson(text), said)
+        COMPACT, SHORT_COMPACT -> checked(splitFromLine(text), said)
     }
+
+    private fun checked(s: SplitIntent, said: String) = Resolver.resolve(CrossCheck.check(Resolver.tidy(s), said))
 }

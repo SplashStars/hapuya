@@ -5,6 +5,11 @@ through a candidate AI provider. Each phrase is scored on intent, time,
 recurrence, duration and act/clarify/refuse against the PRD F5 bar (95%). The
 tool also records latency and cost per phrase.
 
+The parts that don't call a provider live in `:tools:intent-core`: the phrase and
+intent types, the prompts and schemas, `Resolver` and the scorer. The on-phone spike
+(`:spikes:onphone-ai`) uses the same module, so laptop and phone results compare like
+for like.
+
 | Provider | How it calls | Credentials (environment only) |
 |---|---|---|
 | `oracle` | Returns the expected answers; checks the pipeline end to end | none |
@@ -55,3 +60,43 @@ next to the repo, as in CI.
   and apply policy. Same Gemma model: 40.5% -> 73.5% core, same speed. The fixes
   were tuned on this phrase set, so confirm on a fresh set. `ResolverTest` checks
   the resolver alone against 120 rows with ideal codes.
+- **Compact mode, 7 Nov 2026:** `--mode compact` is split mode with a one-line
+  labelled answer (`intent-compact-format.md`) instead of JSON. Results:
+  - holdout, laptop: 68.8% at 2.3 s, against 78.1% at 6.3 s for split;
+  - on the phone it saved little time (see A6), so split JSON stays the default;
+  - the `claude` provider doesn't support compact mode.
+- **Short mode, 7 Nov 2026:** `--mode short` is split mode with about 650 tokens of
+  instructions (`intent-short-prompt.md`) instead of about 1,700. Results:
+  - holdout, laptop: first draft (code names only, no worked examples) 31.3%; with one
+    worked example per code, 68.8% at 3.2 s. That draft was revised once after seeing
+    holdout misses, so the 68.8% is a bit flattering;
+  - phone: 60.9% and 3.6–4.1 s per command while cool (see A6);
+  - the `claude` provider doesn't support short mode (no schema file).
+- **Short-compact mode, 7 Nov 2026:** `--mode short-compact` combines the short
+  instructions with the one-line answer. Holdout, laptop: 68.8% at 3.0 s. Phone: 64.1%
+  at p50 1.9 s, the first setup to meet the 3 s target (see A6).
+- **Accuracy work, 8 Nov 2026:**
+  - What changed:
+    - `Resolver.tidy` fixes model slips that have only one reading;
+    - the line parser accepts codes without labels;
+    - the short instructions were tightened, tuned only on `reminder-phrases-v1.csv`
+      and holdout 1.
+  - Short-compact results:
+    - 200 rows: 65.0% → 81.0%;
+    - holdout 1: 68.8% → 85.9%;
+    - the new, unseen holdout 2: 76.6% → 87.5%.
+- **Word check, 8 Nov 2026:** `CrossCheck.kt` corrects the model's codes when the
+  user's words allow only one reading: day names, "next", holidays, "in N …",
+  am/pm times, ranges, repeat words, event and timer lengths, and place reminders.
+  - It is on by default. `--check off` turns it off; the result label then ends
+    in `-nocheck`.
+  - On the unseen holdout 3, short-compact: laptop 85.9% → 93.8%, phone 64.1% → 89.1%.
+    Holdout 3 was then used for fixes, so the next honest score needs a holdout 4.
+  - Rules only, no model: `--provider rules` (`CrossCheck.fromWords`). Fresh holdout 5
+    (9 Nov): rules only 93.8%; laptop model + check 96.9%; phone model + check 92.2%.
+  - To re-score saved on-phone answers (the A6 CSV keeps each raw answer) with and
+    without the check, without running the model again:
+
+    ```bash
+    ./gradlew :tools:intent-eval:run --args="--rescore ../05_Testing/results/A6/<file>.csv --mode short-compact --dataset ../05_Testing/testsets/reminder-phrases-holdout-v3.csv"
+    ```
